@@ -1,23 +1,4 @@
 return {
-  {
-    "catppuccin/nvim",
-    lazy = false,
-    name = "catppuccin",
-    -- you can do it like this with a config function
-    config = function()
-      require("catppuccin").setup({
-        -- configurations
-      })
-    end,
-    -- or just use opts table
-    opts = {
-      -- configurations
-    },
-  },
-  {
-    "LazyVim/LazyVim",
-    opts = {
-      colorscheme = "catppuccin",
-    },
-  },
+  { "catppuccin/nvim", name = "catppuccin", lazy = false, priority = 1000, opts = { flavour = "mocha" } },
+  { "LazyVim/LazyVim", opts = { colorscheme = "catppuccin" } },
 }
