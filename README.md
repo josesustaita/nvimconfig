@@ -4,7 +4,29 @@
 
 A Catppuccin-flavored LazyVim setup with smooth scrolling and resizing, sensible language extras, and tmux navigation. It runs directly on your machine using a separate Neovim profile.
 
-## Quick start
+## Temporary SSH sessions
+
+SSH into the server, then start a disposable editor from your working directory:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/josesustaita/nvimconfig/main/scripts/remote.sh) /path/to/file
+```
+
+Use Bash with an interactive terminal. The server needs **Git, curl, and tar**, internet access to GitHub, and permission to write the files you want to edit. No sudo or system-package installation is used. A compatible installed Neovim is reused; otherwise the script downloads Neovim **v0.11.5** into the temporary session. Automatic downloads support Linux with glibc and macOS on x86_64/arm64, using the [official Neovim archives](https://neovim.io/doc/install/).
+
+The editor keeps your theme, navigation, and motion settings. This server profile skips Copilot, language servers, parser compilation, and native completion, so Node.js, language toolchains, and a C compiler are unnecessary. Existing `rg` and `fd` improve searching, but are optional for this workflow. Use `:e /another/file` to keep working in the same session.
+
+Quit with `:qa` and the script removes its downloaded configuration, plugins, Neovim binary (if downloaded), caches, and editor state automatically. Saved changes to the files you edited stay in place. It copies the config into a private temporary directory and leaves your installed editor, shell configuration, and normal Neovim profile alone. Normal exit, startup failures, interrupting the bootstrap, SSH hangup, and termination trigger cleanup. A forced kill (`kill -9`) or power loss cannot run cleanup; the session directory printed at startup identifies any leftover files. If `/tmp` is mounted with `noexec`, set `TMPDIR` to a writable directory that permits executables, for example `TMPDIR="$HOME" bash <(curl -fsSL https://raw.githubusercontent.com/josesustaita/nvimconfig/main/scripts/remote.sh) /path/to/file`.
+
+From an existing checkout, the same workflow is available without downloading the configuration again:
+
+```bash
+./scripts/bootstrap.sh remote /path/to/file
+```
+
+To test a branch before it is merged, set `NVIM_CONFIG_REF` to that branch and fetch `scripts/remote.sh` from the matching branch URL.
+
+## Persistent local setup
 
 Install the [native dependencies](#native-dependencies) below, then run:
 
@@ -86,6 +108,7 @@ Copilot is optional and requires your own account authorization (`:Copilot auth`
 - `lua/config/options.lua` / `keymaps.lua` — motion settings and custom keys.
 - `lua/plugins/` — Catppuccin, animations, pairing, autotags, and tmux navigation.
 - `scripts/check.lua` — headless plugin and reduced-motion smoke checks.
+- `scripts/remote.sh` / `lua/plugins/server.lua` — disposable SSH sessions and the lighter server profile.
 
 The bootstrap uses [`:Lazy restore`](https://lazy.folke.io/usage) to align plugins with the committed lockfile. To update deliberately, run `:Lazy sync`, inspect the changed `lazy-lock.json`, and commit intentional updates. After pulling changes, rerun `./scripts/bootstrap.sh install` to restore the new locked versions.
 
@@ -100,6 +123,6 @@ The bootstrap uses [`:Lazy restore`](https://lazy.folke.io/usage) to align plugi
 
 ## Development checks
 
-Run `python3 -m unittest discover -s tests -v` to check installer safety, dependency failures, profile selection, and launch behavior with temporary directories and stub tools. Run `bash -n scripts/*.sh` and `shellcheck scripts/*.sh` for shell checks. With native dependencies installed, `./scripts/bootstrap.sh test` restores real plugins and checks startup, plugin installation, and reduced motion for the selected profile.
+Run `python3 -m unittest discover -s tests -v` to check installer safety, dependency failures, profile selection, remote downloads, isolated state, and cleanup on exit or signals with temporary directories and stub tools. Run `bash -n scripts/*.sh` and `shellcheck scripts/*.sh` for shell checks. With native dependencies installed, `./scripts/bootstrap.sh test` restores real plugins and checks startup, plugin installation, and reduced motion for the selected profile.
 
 Licensed under [Apache 2.0](LICENSE).
