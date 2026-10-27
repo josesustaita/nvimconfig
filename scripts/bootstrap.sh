@@ -63,7 +63,12 @@ fi
 
 "$repo_dir/scripts/install.sh"
 echo 'Restoring plugins from lazy-lock.json...'
-NVIM_REDUCED_MOTION=1 nvim --headless '+Lazy! restore' \
+# Lazy can rewrite the lockfile while discovering/installing a fresh profile.
+# Keep the input locks in memory so restore still uses the committed revisions.
+NVIM_REDUCED_MOTION=1 nvim --headless \
+  --cmd 'lua vim.g.jose_nvim_lock = vim.fn.readfile(vim.fn.stdpath("config") .. "/lazy-lock.json")' \
+  '+lua require("lazy.manage.lock").lock = vim.json.decode(table.concat(vim.g.jose_nvim_lock, "\n"))' \
+  '+Lazy! restore' \
   '+lua dofile(vim.fn.stdpath("config") .. "/scripts/check.lua")'
 
 case "$mode" in

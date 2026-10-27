@@ -120,11 +120,13 @@ Copilot is optional and requires your own account authorization (`:Copilot auth`
 
 - `init.lua` / `lua/config/lazy.lua` — plugin bootstrap and pinned LazyVim release.
 - `lazy-lock.json` — exact plugin revisions; commit intentional updates.
-- `lazyvim.json` — Go, Rust, TypeScript, JSON, Tailwind, and Copilot extras.
+- `lazyvim.json` — Go, Rust, TypeScript, Python, SQL, CMake, Docker, JSON, YAML, TOML, Tailwind, Markdown, Prettier, yank history, dial, color highlights, and Copilot extras.
 - `lua/config/options.lua` / `keymaps.lua` — motion settings and custom keys.
 - `lua/plugins/` — Catppuccin, animations, pairing, autotags, and tmux navigation.
 - `scripts/check.lua` — headless plugin and reduced-motion smoke checks.
 - `scripts/remote.sh` / `lua/plugins/server.lua` — disposable SSH sessions and the lighter server profile.
+
+The full profile includes the extras from my local Neovim setup. Bootstrapping downloads their plugins automatically, including CMake tools, Python environment selection, Dadbod's database UI/completion, Markdown preview/rendering, yank history, dial, and color highlights. Their revisions are pinned in `lazy-lock.json`; language servers and formatters are managed separately through Mason.
 
 The bootstrap uses [`:Lazy restore`](https://lazy.folke.io/usage) to align plugins with the committed lockfile. To update deliberately, run `:Lazy sync`, inspect the changed `lazy-lock.json`, and commit intentional updates. After pulling changes, rerun `./scripts/bootstrap.sh install` to restore the new locked versions.
 
