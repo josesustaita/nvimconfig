@@ -9,7 +9,7 @@ case ${1:-} in
   install|doctor|test) mode=$1; shift ;;
   --help|-h)
     echo 'Usage: ./scripts/bootstrap.sh [file ...] | install | doctor | test'
-    echo '  remote   Open a disposable server session; clean up automatically on exit.'
+    echo '  remote   Open a disposable SSH work shell; clean up when the shell exits.'
     echo '  install  Link the configuration and restore locked plugins without opening the editor.'
     echo '  doctor   Check native dependencies without changing your configuration.'
     echo '  test     Install, restore plugins, and run headless smoke checks.'

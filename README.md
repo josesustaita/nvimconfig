@@ -6,19 +6,35 @@ A Catppuccin-flavored LazyVim setup with smooth scrolling and resizing, sensible
 
 ## Temporary SSH sessions
 
-SSH into the server, then start a disposable editor from your working directory:
+SSH into the server, then bootstrap a temporary work shell:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/josesustaita/nvimconfig/main/scripts/remote.sh) /path/to/file
+exec bash <(curl -fsSL https://raw.githubusercontent.com/josesustaita/nvimconfig/main/scripts/remote.sh) --shell
 ```
 
-Use Bash with an interactive terminal. The server needs **Git, curl, and tar**, internet access to GitHub, and permission to write the files you want to edit. No sudo or system-package installation is used. A compatible installed Neovim is reused; otherwise the script downloads Neovim **v0.11.5** into the temporary session. Automatic downloads support Linux with glibc and macOS on x86_64/arm64, using the [official Neovim archives](https://neovim.io/doc/install/).
+Run `nvim` normally throughout that SSH session. Quit Neovim with `:qa`, work at the shell, then open another file whenever needed. The downloaded editor, configuration, plugins, and caches stay available between editor launches. Plugins download on the first launch and are reused afterward.
 
-The editor keeps your theme, navigation, and motion settings. This server profile skips Copilot, language servers, parser compilation, and native completion, so Node.js, language toolchains, and a C compiler are unnecessary. Existing `rg` and `fd` improve searching, but are optional for this workflow. Use `:e /another/file` to keep working in the same session.
+```bash
+nvim /path/to/file
+# After quitting Neovim, open another file from the same prompt:
+nvim /path/to/another/file
+```
 
-Quit with `:qa` and the script removes its downloaded configuration, plugins, Neovim binary (if downloaded), caches, and editor state automatically. Saved changes to the files you edited stay in place. It copies the config into a private temporary directory and leaves your installed editor, shell configuration, and normal Neovim profile alone. Normal exit, startup failures, interrupting the bootstrap, SSH hangup, and termination trigger cleanup. A forced kill (`kill -9`) or power loss cannot run cleanup; the session directory printed at startup identifies any leftover files. If `/tmp` is mounted with `noexec`, set `TMPDIR` to a writable directory that permits executables, for example `TMPDIR="$HOME" bash <(curl -fsSL https://raw.githubusercontent.com/josesustaita/nvimconfig/main/scripts/remote.sh) /path/to/file`.
+Run `exit` when finished: it cleans up the temporary setup and ends the SSH connection. Disconnecting also triggers cleanup. `exec` replaces your original SSH shell; omit `exec` if you prefer to return to your original SSH prompt after cleanup. A `[jose-nvim]` prompt identifies the work shell. The script reads your `.bashrc`, scopes temporary editor settings to the `nvim` launcher, and keeps shell history inside the temporary session. Other shell commands retain their normal environment.
 
-From an existing checkout, the same workflow is available without downloading the configuration again:
+Use Bash with an interactive terminal. The server needs **Git, curl, and tar**, internet access to GitHub, and permission to write the files you want to edit. No sudo or system-package installation is used. A compatible installed Neovim is reused; otherwise the script downloads Neovim **v0.11.5** into the temporary session. Automatic downloads support compatible glibc-based Linux and macOS on x86_64/arm64, using the [official Neovim archives](https://neovim.io/doc/install/).
+
+The editor keeps your theme, navigation, and motion settings. This server profile skips Copilot, language servers, parser compilation, and native completion, so Node.js, language toolchains, and a C compiler are unnecessary. Existing `rg` and `fd` improve searching, but are optional for this workflow.
+
+Saved changes to the files you edited stay in place after cleanup. The script copies the config into a private temporary directory and leaves your installed editor, shell configuration, and normal Neovim profile alone. A forced kill (`kill -9`) of the wrapper or power loss cannot run cleanup; the session directory printed at startup identifies any leftover files. If `/tmp` is mounted with `noexec`, set `TMPDIR` to a writable directory that permits executables before bootstrapping, for example `export TMPDIR="$HOME"`.
+
+From an existing checkout:
+
+```bash
+./scripts/bootstrap.sh remote --shell
+```
+
+No arguments also selects shell mode. Passing file arguments instead starts a single editor session and cleans up when that editor exits:
 
 ```bash
 ./scripts/bootstrap.sh remote /path/to/file

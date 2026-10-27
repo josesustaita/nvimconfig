@@ -3,10 +3,20 @@
 set -euo pipefail
 
 if [[ ${1:-} == --help || ${1:-} == -h ]]; then
-  echo 'Usage: remote.sh [Neovim arguments ...]'
-  echo 'Start a temporary server profile; remove its setup when Neovim exits.'
+  echo 'Usage: remote.sh [--shell | Neovim arguments ...]'
+  echo 'With no arguments (or --shell), keep Neovim available in a session shell.'
+  echo 'Exit the shell or disconnect to clean up. File arguments open a single editor session.'
   echo 'Requires Bash, Git, curl, tar, and an interactive terminal. No sudo needed.'
   exit 0
+fi
+mode=editor
+if [[ $# -eq 0 || ${1:-} == --shell ]]; then
+  mode=shell
+  if [[ $# -gt 0 ]]; then shift; fi
+  if [[ $# -gt 0 ]]; then
+    echo 'The --shell option does not accept file arguments; run nvim inside the session shell.' >&2
+    exit 1
+  fi
 fi
 if [[ ! -t 0 || ! -t 1 ]]; then
   echo 'Run in an interactive terminal: bash <(curl -fsSL URL) [file ...]' >&2
@@ -19,12 +29,28 @@ for tool in git curl tar; do
   fi
 done
 
+# Save the caller's environment so other commands in the session shell keep
+# their usual configuration. Only the nvim launcher receives isolated paths.
+shell_environment=(env)
+shell_variables=(XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME XDG_RUNTIME_DIR TMPDIR NVIM_APPNAME NVIM_SERVER_MODE PATH)
+for variable in "${shell_variables[@]}"; do
+  if [[ ! ${!variable+x} ]]; then shell_environment+=(-u "$variable"); fi
+done
+for variable in "${shell_variables[@]}"; do
+  if [[ ${!variable+x} ]]; then shell_environment+=("$variable=${!variable}"); fi
+done
+original_umask=$(umask)
 umask 077
 temp_root=$(cd -- "${TMPDIR:-/tmp}" && pwd -P)
 session_dir=$(mktemp -d "$temp_root/jose-nvim.XXXXXXXX")
+shell_pid=
 cleanup() {
   local status=$?
   trap - EXIT
+  if [[ -n "$shell_pid" ]]; then
+    kill -HUP "$shell_pid" 2>/dev/null || true
+    wait "$shell_pid" 2>/dev/null || true
+  fi
   rm -rf -- "$session_dir"
   exit "$status"
 }
@@ -32,7 +58,7 @@ trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-printf 'Temporary Neovim session: %s (removed when you quit)\n' "$session_dir"
+printf 'Temporary Neovim session: %s\n' "$session_dir"
 
 export XDG_CONFIG_HOME="$session_dir/config"
 export XDG_DATA_HOME="$session_dir/data"
@@ -84,5 +110,39 @@ if ! command -v nvim >/dev/null 2>&1 || ! nvim --clean --headless \
 fi
 
 # Keep swap/backup files with the disposable state, never beside edited files.
-# Do not exec: the shell must stay alive to run its cleanup trap.
-nvim --cmd 'lua vim.opt.directory = vim.fn.stdpath("state") .. "/swap//"; vim.opt.backupdir = vim.fn.stdpath("state") .. "/backup//"' "$@"
+nvim_command='lua vim.opt.directory = vim.fn.stdpath("state") .. "/swap//"; vim.opt.backupdir = vim.fn.stdpath("state") .. "/backup//"'
+if [[ "$mode" == shell ]]; then
+  session_bin="$session_dir/bin"
+  mkdir -p -- "$session_bin"
+  {
+    printf '#!/usr/bin/env bash\nexec env '
+    for variable in XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME XDG_RUNTIME_DIR TMPDIR NVIM_APPNAME NVIM_SERVER_MODE; do
+      printf '%q ' "$variable=${!variable}"
+    done
+    printf '%q ' "$(command -v nvim)" --cmd "$nvim_command"
+    printf '"$@"\n'
+  } > "$session_bin/nvim"
+  chmod +x -- "$session_bin/nvim"
+  # Variables in the generated rc file expand in the interactive child shell.
+  # shellcheck disable=SC2016
+  {
+    printf 'if [[ -f "$HOME/.bashrc" ]]; then source "$HOME/.bashrc"; fi\n'
+    printf 'unalias nvim 2>/dev/null || true\nunset -f nvim\n'
+    printf 'export PATH=%q:"$PATH"\nhash -r\n' "$session_bin"
+    printf 'HISTFILE=%q\n' "$session_dir/bash_history"
+    printf 'PS1="[jose-nvim] ${PS1:-\\$ }"\n'
+    printf 'echo "Neovim is ready: use nvim as often as needed. Exit this shell to clean up."\n'
+  } > "$session_dir/bashrc"
+  umask "$original_umask"
+  # wait lets this parent handle disconnects promptly and forward them to Bash.
+  # Explicit stdin preserves the terminal for the interactive child.
+  "${shell_environment[@]}" bash --noprofile --rcfile "$session_dir/bashrc" -i <&0 &
+  shell_pid=$!
+  shell_status=0
+  wait "$shell_pid" || shell_status=$?
+  shell_pid=
+  exit "$shell_status"
+else
+  umask "$original_umask"
+  nvim --cmd "$nvim_command" "$@"
+fi

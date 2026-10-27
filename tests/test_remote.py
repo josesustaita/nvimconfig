@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import pty
+import select
 import shutil
 import signal
 import subprocess
@@ -63,7 +64,8 @@ sys.exit(int(os.getenv("NVIM_TEST_VERSION_EXIT" if clean else "NVIM_TEST_EXIT", 
         path.chmod(0o755)
 
     def run_session(self, *args, script="remote.sh", interactive=True):
-        command = [str(self.repo / "scripts" / script), *args]
+        # Existing editor tests explicitly request one-shot headless mode.
+        command = [str(self.repo / "scripts" / script), *(args or ("--headless",))]
         if not interactive:
             return subprocess.run(command, env=self.env, cwd=self.root, input="",
                                   capture_output=True, text=True, timeout=10)
@@ -77,6 +79,79 @@ sys.exit(int(os.getenv("NVIM_TEST_VERSION_EXIT" if clean else "NVIM_TEST_EXIT", 
 
     def calls(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
+
+    def run_shell(self, commands, *args):
+        master, slave = pty.openpty()
+        process = subprocess.Popen([str(self.repo / "scripts" / "remote.sh"), *args],
+                                   env=self.env, cwd=self.root, stdin=slave,
+                                   stdout=slave, stderr=slave, start_new_session=True)
+        os.close(slave)
+        output = bytearray()
+        try:
+            os.write(master, ("\n".join(commands) + "\n").encode())
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                ready, _, _ = select.select([master], [], [], 0.05)
+                if ready:
+                    try:
+                        chunk = os.read(master, 65536)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    output.extend(chunk)
+                if process.poll() is not None and not ready:
+                    break
+            return process.wait(timeout=1), output.decode(errors="replace")
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+            os.close(master)
+
+    def test_default_shell_reuses_setup_across_editor_invocations(self):
+        status, output = self.run_shell([
+            "nvim 'first file'",
+            'test -d "$(dirname "$(command -v nvim)")/../config/jose-nvim" || exit 99',
+            "nvim 'second file'",
+            'env > ordinary-environment',
+            "exit",
+        ])
+        self.assertEqual(status, 0, output)
+        self.assertEqual(len(self.calls()), 3)
+        first, second = self.calls()[1:]
+        self.assertEqual(first["args"][-1], "first file")
+        self.assertEqual(second["args"][-1], "second file")
+        self.assertEqual(first["config"], second["config"])
+        self.assertEqual(first["data"], second["data"])
+        ordinary = (self.root / "ordinary-environment").read_text().splitlines()
+        self.assertIn(f'XDG_CONFIG_HOME={self.home / "config"}', ordinary)
+        self.assertIn("NVIM_APPNAME=existing-profile", ordinary)
+        self.assertIn(f"TMPDIR={self.temp_sessions}", ordinary)
+        self.assert_cleaned()
+
+    def test_explicit_shell_reads_bashrc_and_handles_existing_nvim_alias(self):
+        rc = self.home / ".bashrc"
+        rc.write_text("alias nvim='false'\nexport TEST_RC_READ=yes\nexport PATH=/usr/bin:/bin\n")
+        status, output = self.run_shell([
+            'test "$TEST_RC_READ" = yes || exit 98',
+            "nvim 'file with spaces'",
+            "exit",
+        ], "--shell")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(self.calls()[-1]["args"][-1], "file with spaces")
+        rc.unlink()
+        self.assert_cleaned()
+
+    def test_shell_exit_status_is_preserved(self):
+        status, output = self.run_shell(["exit 9"])
+        self.assertEqual(status, 9, output)
+        self.assert_cleaned()
+
+    def test_shell_rejects_extra_arguments_before_creating_setup(self):
+        self.assertNotEqual(self.run_session("--shell", "file").returncode, 0)
+        self.assertEqual(self.calls(), [])
+        self.assert_cleaned()
 
     def assert_cleaned(self):
         self.assertEqual(list(self.temp_sessions.iterdir()), [])
@@ -157,7 +232,7 @@ shutil.copytree(source / "lua", root / "lua")
         self.assert_cleaned()
 
     def test_bootstrap_remote_dispatches_before_full_dependency_checks(self):
-        self.assertEqual(self.run_session("remote", script="bootstrap.sh").returncode, 0)
+        self.assertEqual(self.run_session("remote", "--headless", script="bootstrap.sh").returncode, 0)
         self.assertEqual(len(self.calls()), 2)
         self.assert_cleaned()
 
@@ -173,7 +248,7 @@ shutil.copytree(source / "lua", root / "lua")
             with self.subTest(signal=sig):
                 self.log.unlink(missing_ok=True)
                 master, slave = pty.openpty()
-                process = subprocess.Popen([str(self.repo / "scripts" / "remote.sh")],
+                process = subprocess.Popen([str(self.repo / "scripts" / "remote.sh"), "--headless"],
                                            env=self.env, cwd=self.root, stdin=slave,
                                            stdout=slave, stderr=subprocess.DEVNULL, start_new_session=True)
                 try:
@@ -183,6 +258,37 @@ shutil.copytree(source / "lua", root / "lua")
                     self.assertEqual(len(self.calls()), 2)
                     os.killpg(process.pid, sig)
                     self.assertEqual(process.wait(timeout=5), 128 + sig)
+                finally:
+                    if process.poll() is None:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
+                    os.close(master)
+                    os.close(slave)
+                self.assert_cleaned()
+
+    def test_shell_hangup_cleans_up_while_idle_or_editing(self):
+        for editing in (False, True):
+            with self.subTest(editing=editing):
+                self.log.unlink(missing_ok=True)
+                self.env["NVIM_TEST_WAIT"] = "1"
+                ready = self.root / "shell-ready"
+                ready.unlink(missing_ok=True)
+                master, slave = pty.openpty()
+                process = subprocess.Popen([str(self.repo / "scripts" / "remote.sh"), "--shell"],
+                                           env=self.env, cwd=self.root, stdin=slave,
+                                           stdout=slave, stderr=slave, start_new_session=True)
+                try:
+                    os.write(master, b"touch shell-ready\n" + (b"nvim\n" if editing else b""))
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        if ready.exists() and (not editing or len(self.calls()) == 2):
+                            break
+                        time.sleep(0.01)
+                    self.assertTrue(ready.exists())
+                    if editing:
+                        self.assertEqual(len(self.calls()), 2)
+                    os.killpg(process.pid, signal.SIGHUP)
+                    self.assertEqual(process.wait(timeout=5), 129)
                 finally:
                     if process.poll() is None:
                         os.killpg(process.pid, signal.SIGKILL)
