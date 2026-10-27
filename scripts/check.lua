@@ -5,6 +5,12 @@ local function check()
     assert(notice.level ~= vim.log.levels.ERROR, notice.msg)
   end
   local plugins = config.plugins
+  for name, plugin in pairs(plugins) do
+    assert(plugin._.installed, "Plugin was not installed: " .. name)
+    for _, task in ipairs(plugin._.tasks or {}) do
+      assert(not task:has_errors(), name .. ": " .. task:output(vim.log.levels.ERROR))
+    end
+  end
   assert(plugins["LazyVim"] and plugins["catppuccin"], "Editor plugins missing")
   assert(plugins["copilot.lua"], "Copilot extra did not load")
   require("lazy").load({ plugins = { "mini.animate" } })
