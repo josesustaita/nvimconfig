@@ -1,13 +1,77 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
-if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-  echo "Start Docker with the Compose v2 plugin, then retry." >&2; exit 1
-fi
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+export NVIM_APPNAME=${NVIM_APPNAME:-jose-nvim}
+
+mode=edit
 case ${1:-} in
-  doctor) docker compose config --quiet; echo "Docker is ready. Your host Neovim configuration stays untouched."; exit 0 ;;
-  test) docker compose build; exec docker compose run --rm -T -e NVIM_REDUCED_MOTION=1 nvim --headless '+lua dofile(vim.fn.stdpath("config") .. "/scripts/check.lua")' ;;
-  --help|-h) echo 'Usage: ./scripts/bootstrap.sh [file ...] | doctor | test'; echo 'Set NVIM_WORKSPACE=/absolute/path to edit another directory.'; exit 0 ;;
+  remote) shift; exec "$repo_dir/scripts/remote.sh" "$@" ;;
+  install|doctor|test) mode=$1; shift ;;
+  --help|-h)
+    echo 'Usage: ./scripts/bootstrap.sh [file ...] | install | doctor | test'
+    echo '  remote   Open a disposable SSH work shell; clean up when the shell exits.'
+    echo '  install  Link the configuration and restore locked plugins without opening the editor.'
+    echo '  doctor   Check native dependencies without changing your configuration.'
+    echo '  test     Install, restore plugins, and run headless smoke checks.'
+    echo 'Set NVIM_APPNAME to choose a profile (default: jose-nvim).'
+    echo 'Set NVIM_WORKSPACE to open another directory (default: current directory).'
+    exit 0 ;;
 esac
-if [[ ! -t 0 || ! -t 1 ]]; then echo 'Open an interactive terminal, or run ./scripts/bootstrap.sh test.' >&2; exit 1; fi
-exec docker compose run --build --rm nvim "$@"
+
+if [[ ! "$NVIM_APPNAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  echo 'Use an app name containing letters, digits, underscores, or hyphens.' >&2
+  exit 1
+fi
+if [[ "$mode" != edit && $# -gt 0 ]]; then
+  echo "The $mode command does not accept file arguments. See --help." >&2
+  exit 1
+fi
+
+check_dependencies() {
+  local missing=0 tool
+  for tool in nvim git cc curl rg node tree-sitter unzip; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      echo "Missing dependency: $tool" >&2
+      missing=1
+    fi
+  done
+  if ! command -v fd >/dev/null 2>&1 && ! command -v fdfind >/dev/null 2>&1; then
+    echo 'Missing dependency: fd (fd-find on Debian/Ubuntu)' >&2
+    missing=1
+  fi
+  if command -v nvim >/dev/null 2>&1 && ! nvim --clean --headless \
+    '+lua if vim.fn.has("nvim-0.11.5") == 0 then vim.cmd("cquit 1") end' +qa; then
+    echo 'Neovim 0.11.5 or newer is required.' >&2
+    missing=1
+  fi
+  if (( missing )); then
+    echo "Install the native dependencies listed in $repo_dir/README.md, then retry." >&2
+    return 1
+  fi
+  echo 'Native dependencies are ready.'
+}
+
+check_dependencies
+if [[ "$mode" == doctor ]]; then exit 0; fi
+if [[ "$mode" == edit ]]; then
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    echo 'Open an interactive terminal, or use ./scripts/bootstrap.sh install (or test) for headless setup.' >&2
+    exit 1
+  fi
+  cd -- "${NVIM_WORKSPACE:-$PWD}"
+fi
+
+"$repo_dir/scripts/install.sh"
+echo 'Restoring plugins from lazy-lock.json...'
+# Lazy can rewrite the lockfile while discovering/installing a fresh profile.
+# Keep the input locks in memory so restore still uses the committed revisions.
+NVIM_REDUCED_MOTION=1 nvim --headless \
+  --cmd 'lua vim.g.jose_nvim_lock = vim.fn.readfile(vim.fn.stdpath("config") .. "/lazy-lock.json")' \
+  '+lua require("lazy.manage.lock").lock = vim.json.decode(table.concat(vim.g.jose_nvim_lock, "\n"))' \
+  '+Lazy! restore' \
+  '+lua dofile(vim.fn.stdpath("config") .. "/scripts/check.lua")'
+
+case "$mode" in
+  install|test) exit 0 ;;
+esac
+exec nvim "$@"

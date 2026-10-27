@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 app_name=${NVIM_APPNAME:-jose-nvim}
 if [[ ! "$app_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then echo "Use an app name containing letters, digits, underscores, or hyphens." >&2; exit 1; fi
 config_root=${XDG_CONFIG_HOME:-$HOME/.config}

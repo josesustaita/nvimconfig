@@ -2,11 +2,49 @@
 
 # Jose's Neovim workbench ✦
 
-A Catppuccin-flavored LazyVim setup with smooth scrolling and resizing, sensible language extras, and tmux navigation. A Docker sandbox lets you try it without replacing your usual editor configuration.
+A Catppuccin-flavored LazyVim setup with smooth scrolling and resizing, sensible language extras, and tmux navigation. It runs directly on your machine using a separate Neovim profile.
 
-## Try it in Docker
+## Temporary SSH sessions
 
-Prerequisite: **Docker with Compose v2**, an interactive terminal, and Bash/WSL.
+SSH into the server, then bootstrap a temporary work shell:
+
+```bash
+exec bash <(curl -fsSL https://raw.githubusercontent.com/josesustaita/nvimconfig/main/scripts/remote.sh) --shell
+```
+
+Run `nvim` normally throughout that SSH session. Quit Neovim with `:qa`, work at the shell, then open another file whenever needed. The downloaded editor, configuration, plugins, and caches stay available between editor launches. Plugins download on the first launch and are reused afterward.
+
+```bash
+nvim /path/to/file
+# After quitting Neovim, open another file from the same prompt:
+nvim /path/to/another/file
+```
+
+Run `exit` when finished: it cleans up the temporary setup and ends the SSH connection. Disconnecting also triggers cleanup. `exec` replaces your original SSH shell; omit `exec` if you prefer to return to your original SSH prompt after cleanup. A `[jose-nvim]` prompt identifies the work shell. The script reads your `.bashrc`, scopes temporary editor settings to the `nvim` launcher, and keeps shell history inside the temporary session. Other shell commands retain their normal environment.
+
+Use Bash with an interactive terminal. The server needs **Git, curl, and tar**, internet access to GitHub, and permission to write the files you want to edit. No sudo or system-package installation is used. A compatible installed Neovim is reused; otherwise the script downloads Neovim **v0.11.5** into the temporary session. Automatic downloads support compatible glibc-based Linux and macOS on x86_64/arm64, using the [official Neovim archives](https://neovim.io/doc/install/).
+
+The editor keeps your theme, navigation, and motion settings. This server profile skips Copilot, language servers, parser compilation, and native completion, so Node.js, language toolchains, and a C compiler are unnecessary. Existing `rg` and `fd` improve searching, but are optional for this workflow.
+
+Saved changes to the files you edited stay in place after cleanup. The script copies the config into a private temporary directory and leaves your installed editor, shell configuration, and normal Neovim profile alone. A forced kill (`kill -9`) of the wrapper or power loss cannot run cleanup; the session directory printed at startup identifies any leftover files. If `/tmp` is mounted with `noexec`, set `TMPDIR` to a writable directory that permits executables before bootstrapping, for example `export TMPDIR="$HOME"`.
+
+From an existing checkout:
+
+```bash
+./scripts/bootstrap.sh remote --shell
+```
+
+No arguments also selects shell mode. Passing file arguments instead starts a single editor session and cleans up when that editor exits:
+
+```bash
+./scripts/bootstrap.sh remote /path/to/file
+```
+
+To test a branch before it is merged, set `NVIM_CONFIG_REF` to that branch and fetch `scripts/remote.sh` from the matching branch URL.
+
+## Persistent local setup
+
+Install the [native dependencies](#native-dependencies) below, then run:
 
 ```bash
 git clone --depth 1 https://github.com/josesustaita/nvimconfig.git
@@ -14,30 +52,50 @@ cd nvimconfig
 ./scripts/bootstrap.sh
 ```
 
-The first build installs Neovim **0.11.5**, Node 22, Go 1.25, Rust 1.90, Git, build tools, Tree-sitter CLI, ripgrep, fd, Python, and the locked plugins. Internet is needed for that setup. The container runs as the Node image's unprivileged user. It opens this checkout at `/workspace`; edits to files there are edits to the mounted host files.
+The bootstrap checks your tools, links this checkout at `${XDG_CONFIG_HOME:-~/.config}/jose-nvim`, restores plugins from `lazy-lock.json`, runs smoke checks, and opens Neovim. Internet access is needed to download plugins and language tools on first setup. Later runs reuse the same local data. Keep this checkout in place while the symlink is in use.
+
+Your normal `nvim` configuration stays untouched. The installer refuses to replace an existing destination and is safe to rerun. To use this as your default configuration instead, run `NVIM_APPNAME=nvim ./scripts/bootstrap.sh`; an existing `nvim` configuration must be moved aside first. Use the same `NVIM_APPNAME` when installing, checking, and launching a custom profile.
 
 ```bash
 ./scripts/bootstrap.sh init.lua
 NVIM_WORKSPACE=/absolute/path/to/project ./scripts/bootstrap.sh
 NVIM_REDUCED_MOTION=1 ./scripts/bootstrap.sh
-./scripts/bootstrap.sh doctor
-./scripts/bootstrap.sh test
+./scripts/bootstrap.sh doctor    # dependency checks only; no install
+./scripts/bootstrap.sh install   # setup without opening the editor
+./scripts/bootstrap.sh test      # setup and headless smoke checks
 ```
 
-The image includes plugin files; named volumes preserve plugin data, editor state, and caches. The host's normal Neovim configuration is not mounted or replaced. To leave Neovim, use `:qa` (`:qa!` discards unsaved edits). `docker compose down` removes the sandbox network. Only use `docker compose down --volumes` when you intentionally want to erase the sandbox's cached editor data; project files are separate bind mounts.
-
-Compose reads `.env` if you create it from `.env.example`. You can also set `NVIM_WORKSPACE` and `NVIM_REDUCED_MOTION` directly on the command line.
-
-## Install alongside your own configuration
-
-Install Neovim **0.11.5+**, Git, a C compiler, curl, ripgrep, fd, Node, and Tree-sitter CLI first. A Nerd Font is optional for richer icons. Go/Rust language tools may require their project toolchains; the Docker sandbox is an editor environment, not a replacement for every project's build image.
+File paths are relative to your current directory, or to `NVIM_WORKSPACE` when set. After setup, launch directly from any project directory without restoring plugins again:
 
 ```bash
-./scripts/install.sh
 NVIM_APPNAME=jose-nvim nvim
 ```
 
-The installer creates a symlink at `${XDG_CONFIG_HOME:-~/.config}/jose-nvim`, leaving the normal `nvim` configuration alone. It refuses to replace an existing destination and is safe to rerun. Choose another `NVIM_APPNAME` to install a separate profile. Keep this checkout in place while the symlink is in use.
+To create only the configuration link, use `./scripts/install.sh`. Neovim then downloads plugins when first launched. To leave Neovim, use `:qa` (`:qa!` discards unsaved edits).
+
+## Native dependencies
+
+Use Bash on Linux, macOS, or WSL. Install **Neovim 0.11.5+**, Git, a C compiler (`cc`), curl, ripgrep, fd (`fdfind` also works), Node.js, Tree-sitter CLI, and unzip. Python 3 with venv support is useful for Python-based Mason tools. A Nerd Font is optional for richer icons. See the upstream [Neovim installation guide](https://neovim.io/doc/install/) and [LazyVim requirements](https://www.lazyvim.org/#%EF%B8%8F-requirements).
+
+On macOS with Homebrew:
+
+```bash
+xcode-select --install  # if Command Line Tools are not already installed
+brew install neovim git curl ripgrep fd node tree-sitter unzip python
+```
+
+On Debian/Ubuntu or Ubuntu in WSL:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y neovim git build-essential curl ca-certificates ripgrep fd-find nodejs npm unzip python3 python3-venv
+npm install --global --prefix "$HOME/.local" tree-sitter-cli
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Add the PATH line to your shell startup file to keep the Tree-sitter CLI available in future terminals. Some distro releases ship an older Neovim: check `nvim --version`. If it is below 0.11.5, install the **v0.11.5** archive for your OS/architecture from [Neovim releases](https://github.com/neovim/neovim/releases/tag/v0.11.5) and put its `bin` directory first on PATH. Use a current Node.js LTS release if your distro's version is too old for language tools.
+
+The scripts check dependencies and configure Neovim; system packages remain managed by your package manager. Go and Rust extras need their project toolchains for language servers and builds. Language tools are managed through `:Mason` and can finish installing on first interactive launch; the bootstrap smoke check does not wait for every language server to install.
 
 ## A few keys to know
 
@@ -62,19 +120,27 @@ Copilot is optional and requires your own account authorization (`:Copilot auth`
 
 - `init.lua` / `lua/config/lazy.lua` — plugin bootstrap and pinned LazyVim release.
 - `lazy-lock.json` — exact plugin revisions; commit intentional updates.
-- `lazyvim.json` — Go, Rust, TypeScript, JSON, Tailwind, and Copilot extras.
+- `lazyvim.json` — Go, Rust, TypeScript, Python, SQL, CMake, Docker, JSON, YAML, TOML, Tailwind, Markdown, Prettier, yank history, dial, color highlights, and Copilot extras.
 - `lua/config/options.lua` / `keymaps.lua` — motion settings and custom keys.
 - `lua/plugins/` — Catppuccin, animations, pairing, autotags, and tmux navigation.
 - `scripts/check.lua` — headless plugin and reduced-motion smoke checks.
+- `scripts/remote.sh` / `lua/plugins/server.lua` — disposable SSH sessions and the lighter server profile.
 
-The Docker build restores the lockfile. To update deliberately, run `:Lazy sync` in a local profile, inspect the changed `lazy-lock.json`, then rebuild the image. Existing sandbox data volumes can retain older plugin versions; run `:Lazy restore` after rebuilding to align them with the bundled lockfile.
+The full profile includes the extras from my local Neovim setup. Bootstrapping downloads their plugins automatically, including CMake tools, Python environment selection, Dadbod's database UI/completion, Markdown preview/rendering, yank history, dial, and color highlights. Their revisions are pinned in `lazy-lock.json`; language servers and formatters are managed separately through Mason.
+
+The bootstrap uses [`:Lazy restore`](https://lazy.folke.io/usage) to align plugins with the committed lockfile. To update deliberately, run `:Lazy sync`, inspect the changed `lazy-lock.json`, and commit intentional updates. After pulling changes, rerun `./scripts/bootstrap.sh install` to restore the new locked versions.
 
 ## Troubleshooting
 
 - **No icons:** use a Nerd Font, or keep editing with the textual controls.
-- **Plugin download failed:** check network access, retry the build, and inspect `:Lazy`.
+- **Plugin download failed:** check network access, rerun `./scripts/bootstrap.sh install`, and inspect `:Lazy`.
 - **Language server missing:** inspect `:Mason` and `:checkhealth`; some languages require additional project toolchains or provider access.
-- **File permission errors in Docker:** the image runs as UID 1000. Use a writable workspace with compatible permissions; files remain owned by the container's user.
+- **Configuration already exists:** choose a different `NVIM_APPNAME` or move the existing configuration aside yourself; the installer never overwrites it.
+- **Missing or old tools:** run `./scripts/bootstrap.sh doctor` and check the dependency instructions above.
 - **Terminal required:** use the interactive bootstrap for editing and `./scripts/bootstrap.sh test` in CI.
+
+## Development checks
+
+Run `python3 -m unittest discover -s tests -v` to check installer safety, dependency failures, profile selection, remote downloads, isolated state, and cleanup on exit or signals with temporary directories and stub tools. Run `bash -n scripts/*.sh` and `shellcheck scripts/*.sh` for shell checks. With native dependencies installed, `./scripts/bootstrap.sh test` restores real plugins and checks startup, plugin installation, and reduced motion for the selected profile.
 
 Licensed under [Apache 2.0](LICENSE).
